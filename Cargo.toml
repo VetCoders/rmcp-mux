@@ -20,3 +20,4 @@ tray-icon = "0.21.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde_yaml = "0.9"
 toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
