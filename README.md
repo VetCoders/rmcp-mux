@@ -23,7 +23,14 @@ Binaries live in `target/release/mcp_mux`.
 curl -fsSL https://raw.githubusercontent.com/LibraxisAI/mcp_mux/main/tools/install.sh | sh
 ```
 - Places wrapper in `$HOME/.local/bin/mcp_mux` and ensures PATH contains cargo bin + wrapper dir.
-- You can override `INSTALL_DIR` or `CARGO_HOME` envs.
+- Env overrides: `INSTALL_DIR`, `CARGO_HOME`, `MUX_REF` (branch/tag, default main), `MUX_NO_LOCK=1` to skip `--locked`.
+
+### Built-in proxy (no socat required)
+If your MCP host wants a STDIO command, use the bundled proxy:
+```
+mcp_mux_proxy --socket /tmp/mcp-memory.sock
+```
+Point host config to `mcp_mux_proxy` with the matching socket path.
 
 ## Run (example: memory server)
 ```
@@ -32,6 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/LibraxisAI/mcp_mux/main/tools/insta
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5 \
   --log-level info
+
+```
 
 ## Config-driven run (JSON/YAML/TOML)
 - Default config path: `~/.codex/mcp.json` (override via `--config <path>`). Parser auto-detects by extension (`.json`, `.yaml`/`.yml`, `.toml`).
@@ -83,12 +92,19 @@ service_name = "general-memory"
 ```
 
 ### Proxy config for MCP hosts
-Point the host to a lightweight proxy that connects to the mux socket, e.g.:
+Use the bundled proxy instead of `socat`:
 ```
-command = "/usr/bin/env"
-args = ["socat", "STDIO", "UNIX-CONNECT:/tmp/mcp-memory.sock"]
+command = "mcp_mux_proxy"
+args = ["--socket", "/tmp/mcp-memory.sock"]
 ```
 Do this per service (memory, brave-search, etc.) with distinct sockets and mux instances.
+
+### launchd (macOS) example
+A template lives at `tools/launchd/mcp_mux.sample.plist`. Copy to `~/Library/LaunchAgents/`, replace paths/user, then:
+```
+launchctl load -w ~/Library/LaunchAgents/mcp_mux.general-memory.plist
+```
+Label should be unique per service; logs go to the paths defined in the plist.
 
 ## Runtime behavior
 - New client → assigned `client_id`, messages get `global_id = c<client>:<seq>`.

@@ -8,11 +8,15 @@ umask 022
 # Env overrides:
 #   INSTALL_DIR   where to place the runnable `mcp_mux` wrapper (default: $HOME/.local/bin)
 #   CARGO_HOME    override cargo home (default: ~/.cargo)
+#   MUX_REF       branch/tag/commit to install (default: main)
+#   MUX_NO_LOCK   set to 1 to skip --locked
 
 INSTALL_DIR=${INSTALL_DIR:-"$HOME/.local/bin"}
 CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"}
 CARGO_BIN="$CARGO_HOME/bin"
 REPO_URL="https://github.com/LibraxisAI/mcp_mux"
+# Allow pinning a branch/tag/commit; defaults to main.
+MUX_REF=${MUX_REF:-"main"}
 
 info() { printf "[mcp_mux] %s\n" "$*"; }
 warn() { printf "[mcp_mux][warn] %s\n" "$*" >&2; }
@@ -22,8 +26,11 @@ command -v cargo >/dev/null 2>&1 || {
   exit 1;
 }
 
-info "Installing mcp_mux from $REPO_URL (cargo install --git)"
-cargo install --git "$REPO_URL" --force mcp_mux >/dev/null
+info "Installing mcp_mux from $REPO_URL (ref: $MUX_REF)"
+# --locked keeps dependency resolution reproducible; override with MUX_NO_LOCK=1 if needed.
+lock_flag="--locked"
+[ "${MUX_NO_LOCK:-0}" = "1" ] && lock_flag=""
+cargo install --git "$REPO_URL" --branch "$MUX_REF" $lock_flag --force mcp_mux >/dev/null
 
 installed_bin="$CARGO_BIN/mcp_mux"
 if [[ ! -x $installed_bin ]]; then

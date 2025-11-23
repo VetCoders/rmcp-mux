@@ -17,13 +17,18 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Command;
 use tokio::signal;
 use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use tokio::time::sleep;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+use tracing_subscriber::filter::LevelFilter;
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
     Icon, TrayIconBuilder,
 };
+
+const MAX_QUEUE: usize = 1024;
+const MAX_PENDING: usize = 2048;
 
 /// Robust MCP mux: single MCP server child, many clients via UNIX socket,
 /// initialize cache, ID rewriting, child restarts, and active client limit.
@@ -185,8 +190,13 @@ async fn main() -> Result<()> {
     // Zbierz parametry z configa + CLI overrides
     let params = resolve_params(&cli, config.as_ref())?;
 
+    let level = params
+        .log_level
+        .parse::<LevelFilter>()
+        .map_err(|_| anyhow!("invalid log level: {}", params.log_level))?;
+
     tracing_subscriber::fmt()
-        .with_env_filter(format!("mcp_mux={}", params.log_level))
+        .with_max_level(level)
         .with_target(false)
         .init();
 
@@ -244,7 +254,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    let (to_server_tx, to_server_rx) = mpsc::unbounded_channel::<Value>();
+    let (to_server_tx, to_server_rx) = mpsc::channel::<Value>(MAX_QUEUE);
     let (server_events_tx, server_events_rx) = mpsc::unbounded_channel::<ServerEvent>();
 
     // Server -> clients router
@@ -323,7 +333,7 @@ async fn main() -> Result<()> {
 async fn handle_client(
     stream: UnixStream,
     state: Arc<Mutex<MuxState>>,
-    to_server_tx: mpsc::UnboundedSender<Value>,
+    to_server_tx: mpsc::Sender<Value>,
     active_clients: Arc<Semaphore>,
     status_tx: watch::Sender<StatusSnapshot>,
     shutdown: CancellationToken,
@@ -402,15 +412,15 @@ async fn handle_client_message(
     client_id: u64,
     mut msg: Value,
     state: &Arc<Mutex<MuxState>>,
-    to_server_tx: &mpsc::UnboundedSender<Value>,
+    to_server_tx: &mpsc::Sender<Value>,
     active_clients: &Arc<Semaphore>,
     status_tx: &watch::Sender<StatusSnapshot>,
 ) -> Result<()> {
-    // Notification (brak id) - forward as-is
+    // Notifications (no id) are forwarded best-effort; if the queue is full we drop with a warning.
     if msg.get("id").is_none() {
-        to_server_tx
-            .send(msg)
-            .map_err(|_| anyhow!("server channel closed"))?;
+        if let Err(e) = to_server_tx.try_send(msg) {
+            warn!("dropping notification from client {client_id}: {e}");
+        }
         publish_status(state, active_clients, status_tx).await;
         return Ok(());
     }
@@ -445,6 +455,16 @@ async fn handle_client_message(
 
         // Pierwszy initialize: przepuszczamy do serwera
         st.initializing = true;
+        if st.pending.len() >= MAX_PENDING {
+            if let Some(tx) = st.clients.get(&client_id) {
+                tx.send(error_response(
+                    local_id.clone(),
+                    "mux overloaded (too many pending)",
+                ))
+                .ok();
+            }
+            return Ok(());
+        }
         let global_id = format!("c{client_id}:{}", st.next_request_id());
         st.pending.insert(
             global_id.clone(),
@@ -458,6 +478,7 @@ async fn handle_client_message(
         set_id(&mut msg, Value::String(global_id));
         to_server_tx
             .send(msg)
+            .await
             .map_err(|_| anyhow!("server channel closed"))?;
         return Ok(());
     }
@@ -465,6 +486,16 @@ async fn handle_client_message(
     // Normal request
     let global_id = {
         let mut st = state.lock().await;
+        if st.pending.len() >= MAX_PENDING {
+            if let Some(tx) = st.clients.get(&client_id) {
+                tx.send(error_response(
+                    local_id.clone(),
+                    "mux overloaded (too many pending)",
+                ))
+                .ok();
+            }
+            return Ok(());
+        }
         let gid = format!("c{client_id}:{}", st.next_request_id());
         st.pending.insert(
             gid.clone(),
@@ -480,6 +511,7 @@ async fn handle_client_message(
     set_id(&mut msg, Value::String(global_id));
     to_server_tx
         .send(msg)
+        .await
         .map_err(|_| anyhow!("server channel closed"))?;
     publish_status(state, active_clients, status_tx).await;
     Ok(())
@@ -784,13 +816,15 @@ fn set_id(msg: &mut Value, id: Value) {
 async fn server_manager(
     cmd: String,
     args: Vec<String>,
-    mut to_server_rx: mpsc::UnboundedReceiver<Value>,
+    mut to_server_rx: mpsc::Receiver<Value>,
     server_events_tx: mpsc::UnboundedSender<ServerEvent>,
     state: Arc<Mutex<MuxState>>,
     active_clients: Arc<Semaphore>,
     status_tx: watch::Sender<StatusSnapshot>,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    let mut backoff = Duration::from_secs(1);
+
     loop {
         if shutdown.is_cancelled() {
             break;
@@ -905,7 +939,9 @@ async fn server_manager(
         if shutdown.is_cancelled() {
             break;
         }
-        info!("restarting MCP server after failure");
+        info!("restarting MCP server after failure, backoff {:?}", backoff);
+        sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(30));
     }
     Ok(())
 }
