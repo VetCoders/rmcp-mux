@@ -1,16 +1,11 @@
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use crossbeam_channel::{bounded, unbounded, Receiver};
 use futures::{SinkExt, StreamExt};
-use image::ImageFormat;
 use rmcp::transport::async_rw::JsonRpcMessageCodec;
 use serde_json::Value;
 use tokio::net::{UnixListener, UnixStream};
@@ -22,10 +17,19 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use tracing_subscriber::filter::LevelFilter;
-use tray_icon::{
-    menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
-    Icon, TrayIconBuilder,
+
+mod config;
+mod state;
+#[cfg(feature = "tray")]
+mod tray;
+
+use crate::config::{expand_path, load_config, resolve_params};
+use crate::state::{
+    error_response, publish_status, reset_state, set_id, snapshot_for_state, MuxState, Pending,
+    ServerStatus, StatusSnapshot,
 };
+#[cfg(feature = "tray")]
+use crate::tray::{find_tray_icon, spawn_tray};
 
 const MAX_QUEUE: usize = 1024;
 const MAX_PENDING: usize = 2048;
@@ -62,113 +66,6 @@ struct Cli {
     /// Service key inside config (`servers.<name>`)
     #[arg(long)]
     service: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-struct Pending {
-    client_id: u64,
-    local_id: Value,
-    is_initialize: bool,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct Config {
-    servers: HashMap<String, ServerConfig>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct ServerConfig {
-    socket: Option<String>,
-    cmd: Option<String>,
-    args: Option<Vec<String>>,
-    max_active_clients: Option<usize>,
-    tray: Option<bool>,
-    service_name: Option<String>,
-    log_level: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-enum ServerStatus {
-    Starting,
-    Running,
-    Restarting,
-    Failed(String),
-    Stopped,
-}
-
-#[derive(Clone, Debug)]
-struct StatusSnapshot {
-    service_name: String,
-    server_status: ServerStatus,
-    restarts: u64,
-    connected_clients: usize,
-    active_clients: usize,
-    max_active_clients: usize,
-    pending_requests: usize,
-    cached_initialize: bool,
-    initializing: bool,
-    last_reset: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-struct LoadedIcon {
-    data: Vec<u8>,
-    width: u32,
-    height: u32,
-}
-
-#[derive(Clone)]
-struct MuxState {
-    next_client_id: u64,
-    next_global_id: u64,
-    clients: HashMap<u64, mpsc::UnboundedSender<Value>>,
-    pending: HashMap<String, Pending>,
-    cached_initialize: Option<Value>,
-    init_waiting: Vec<(u64, Value)>,
-    initializing: bool,
-    server_status: ServerStatus,
-    restarts: u64,
-    last_reset: Option<String>,
-    max_active_clients: usize,
-    service_name: String,
-}
-
-impl MuxState {
-    fn new(max_active_clients: usize, service_name: String) -> Self {
-        Self {
-            next_client_id: 1,
-            next_global_id: 1,
-            clients: HashMap::new(),
-            pending: HashMap::new(),
-            cached_initialize: None,
-            init_waiting: Vec::new(),
-            initializing: false,
-            server_status: ServerStatus::Starting,
-            restarts: 0,
-            last_reset: None,
-            max_active_clients,
-            service_name,
-        }
-    }
-
-    fn register_client(&mut self, tx: mpsc::UnboundedSender<Value>) -> u64 {
-        let id = self.next_client_id;
-        self.next_client_id += 1;
-        self.clients.insert(id, tx);
-        id
-    }
-
-    fn unregister_client(&mut self, client_id: u64) {
-        self.clients.remove(&client_id);
-        self.pending.retain(|_, p| p.client_id != client_id);
-        self.init_waiting.retain(|(cid, _)| *cid != client_id);
-    }
-
-    fn next_request_id(&mut self) -> u64 {
-        let id = self.next_global_id;
-        self.next_global_id += 1;
-        id
-    }
 }
 
 enum ServerEvent {
@@ -246,10 +143,21 @@ async fn main() -> Result<()> {
         drop(st);
         watch::channel(initial)
     };
+    #[cfg(not(feature = "tray"))]
+    let _ = &status_rx;
 
+    #[cfg(feature = "tray")]
     let tray_icon = find_tray_icon();
-    let tray_handle = if tray_enabled {
+    #[cfg(feature = "tray")]
+    let tray_handle: Option<std::thread::JoinHandle<()>> = if tray_enabled {
         Some(spawn_tray(status_rx.clone(), shutdown.clone(), tray_icon))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "tray"))]
+    let _tray_handle: Option<()> = if tray_enabled {
+        warn!("tray support compiled out; ignoring --tray");
+        None
     } else {
         None
     };
@@ -324,6 +232,7 @@ async fn main() -> Result<()> {
 
     // Cleanup socket
     let _ = tokio::fs::remove_file(&socket_path).await;
+    #[cfg(feature = "tray")]
     if let Some(handle) = tray_handle {
         let _ = handle.join();
     }
@@ -539,141 +448,6 @@ async fn handle_server_events(
     }
 }
 
-fn expand_path<P: AsRef<str>>(raw: P) -> PathBuf {
-    let s = raw.as_ref();
-    if let Some(stripped) = s.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(stripped);
-        }
-    }
-    PathBuf::from(s)
-}
-
-fn load_config(path: &Path) -> Result<Option<Config>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let data = fs::read_to_string(path)
-        .with_context(|| format!("failed to read config at {}", path.display()))?;
-
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    let cfg: Config = match ext.as_str() {
-        "yaml" | "yml" => serde_yaml::from_str(&data)
-            .with_context(|| format!("failed to parse yaml config {}", path.display()))?,
-        "toml" => toml::from_str(&data)
-            .with_context(|| format!("failed to parse toml config {}", path.display()))?,
-        _ => serde_json::from_str(&data)
-            .with_context(|| format!("failed to parse json config {}", path.display()))?,
-    };
-    Ok(Some(cfg))
-}
-
-fn resolve_params(cli: &Cli, config: Option<&Config>) -> Result<ResolvedParams> {
-    let service_cfg = if let Some(cfg) = config {
-        if let Some(name) = &cli.service {
-            let found = cfg
-                .servers
-                .get(name)
-                .cloned()
-                .ok_or_else(|| anyhow!("service '{name}' not found in config"))?;
-            Some((name.clone(), found))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if config.is_some() && cli.service.is_none() {
-        return Err(anyhow!("--service is required when using --config"));
-    }
-
-    let socket = cli
-        .socket
-        .clone()
-        .or_else(|| {
-            service_cfg
-                .as_ref()
-                .and_then(|(_, c)| c.socket.clone().map(expand_path))
-        })
-        .ok_or_else(|| anyhow!("socket path not provided (use --socket or config)"))?;
-
-    let cmd = cli
-        .cmd
-        .clone()
-        .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.cmd.clone()))
-        .ok_or_else(|| anyhow!("cmd not provided (use --cmd or config)"))?;
-
-    let args = if !cli.args.is_empty() {
-        cli.args.clone()
-    } else {
-        service_cfg
-            .as_ref()
-            .and_then(|(_, c)| c.args.clone())
-            .unwrap_or_default()
-    };
-
-    let max_clients = service_cfg
-        .as_ref()
-        .and_then(|(_, c)| c.max_active_clients)
-        .unwrap_or(cli.max_active_clients);
-
-    let tray_enabled = if cli.tray {
-        true
-    } else {
-        service_cfg
-            .as_ref()
-            .and_then(|(_, c)| c.tray)
-            .unwrap_or(false)
-    };
-
-    let log_level = service_cfg
-        .as_ref()
-        .and_then(|(_, c)| c.log_level.clone())
-        .unwrap_or_else(|| cli.log_level.clone());
-
-    let service_name_raw = cli
-        .service_name
-        .clone()
-        .or_else(|| {
-            service_cfg
-                .as_ref()
-                .and_then(|(_, c)| c.service_name.clone())
-        })
-        .or_else(|| {
-            socket
-                .file_name()
-                .and_then(|n| n.to_string_lossy().split('.').next().map(|s| s.to_string()))
-        })
-        .unwrap_or_else(|| "mcp_mux".to_string());
-
-    Ok(ResolvedParams {
-        socket,
-        cmd,
-        args,
-        max_clients,
-        tray_enabled,
-        log_level,
-        service_name: service_name_raw,
-    })
-}
-
-#[derive(Clone, Debug)]
-struct ResolvedParams {
-    socket: PathBuf,
-    cmd: String,
-    args: Vec<String>,
-    max_clients: usize,
-    tray_enabled: bool,
-    log_level: String,
-    service_name: String,
-}
-
 async fn handle_server_message(
     msg: Value,
     state: &Arc<Mutex<MuxState>>,
@@ -737,79 +511,6 @@ async fn handle_server_message(
     }
     publish_status(state, active_clients, status_tx).await;
     Ok(())
-}
-
-async fn reset_state(
-    state: &Arc<Mutex<MuxState>>,
-    reason: &str,
-    active_clients: &Arc<Semaphore>,
-    status_tx: &watch::Sender<StatusSnapshot>,
-) {
-    let mut st = state.lock().await;
-    let pending = std::mem::take(&mut st.pending);
-    let waiters = std::mem::take(&mut st.init_waiting);
-    st.cached_initialize = None;
-    st.initializing = false;
-    st.last_reset = Some(reason.to_string());
-
-    for (_, p) in pending {
-        if let Some(tx) = st.clients.get(&p.client_id) {
-            tx.send(error_response(p.local_id, reason)).ok();
-        }
-    }
-    for (cid, lid) in waiters {
-        if let Some(tx) = st.clients.get(&cid) {
-            tx.send(error_response(lid, reason)).ok();
-        }
-    }
-    drop(st);
-    publish_status(state, active_clients, status_tx).await;
-}
-
-fn error_response(id: Value, message: &str) -> Value {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": -32000,
-            "message": message,
-        }
-    })
-}
-
-fn snapshot_for_state(st: &MuxState, active_clients: usize) -> StatusSnapshot {
-    StatusSnapshot {
-        service_name: st.service_name.clone(),
-        server_status: st.server_status.clone(),
-        restarts: st.restarts,
-        connected_clients: st.clients.len(),
-        active_clients,
-        max_active_clients: st.max_active_clients,
-        pending_requests: st.pending.len(),
-        cached_initialize: st.cached_initialize.is_some(),
-        initializing: st.initializing,
-        last_reset: st.last_reset.clone(),
-    }
-}
-
-async fn publish_status(
-    state: &Arc<Mutex<MuxState>>,
-    active_clients: &Arc<Semaphore>,
-    status_tx: &watch::Sender<StatusSnapshot>,
-) {
-    let st = state.lock().await;
-    let active = st
-        .max_active_clients
-        .saturating_sub(active_clients.available_permits());
-    let snapshot = snapshot_for_state(&st, active);
-    drop(st);
-    let _ = status_tx.send(snapshot);
-}
-
-fn set_id(msg: &mut Value, id: Value) {
-    if let Some(obj) = msg.as_object_mut() {
-        obj.insert("id".to_string(), id);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -946,243 +647,16 @@ async fn server_manager(
     Ok(())
 }
 
-fn spawn_tray(
-    status_rx: watch::Receiver<StatusSnapshot>,
-    shutdown: CancellationToken,
-    icon: Option<LoadedIcon>,
-) -> thread::JoinHandle<()> {
-    let (snap_tx, snap_rx) = unbounded();
-    let (stop_tx, stop_rx) = bounded(1);
-
-    // Most recent snapshot forwarded to blocking tray thread.
-    tokio::spawn(async move {
-        let mut rx = status_rx;
-        let _ = snap_tx.send(rx.borrow().clone());
-        while rx.changed().await.is_ok() {
-            let snap = rx.borrow().clone();
-            if snap_tx.send(snap).is_err() {
-                break;
-            }
-        }
-    });
-
-    // Stop signal when shutdown is requested.
-    tokio::spawn({
-        let stop_tx = stop_tx.clone();
-        let shutdown = shutdown.clone();
-        async move {
-            shutdown.cancelled().await;
-            let _ = stop_tx.send(());
-        }
-    });
-
-    thread::spawn(move || tray_loop(snap_rx, stop_rx, shutdown, icon))
-}
-
-struct TrayUi {
-    _tray: tray_icon::TrayIcon,
-    header: MenuItem,
-    status: MenuItem,
-    clients: MenuItem,
-    pending: MenuItem,
-    init_state: MenuItem,
-    restarts: MenuItem,
-    quit_id: MenuId,
-}
-
-impl TrayUi {
-    fn update(&self, snapshot: &StatusSnapshot) {
-        self.header
-            .set_text(format!("Service: {}", snapshot.service_name));
-        self.status.set_text(status_line(snapshot));
-        self.clients.set_text(client_line(snapshot));
-        self.pending.set_text(pending_line(snapshot));
-        self.init_state.set_text(init_line(snapshot));
-        self.restarts.set_text(restart_line(snapshot));
-    }
-}
-
-fn tray_loop(
-    snap_rx: Receiver<StatusSnapshot>,
-    stop_rx: Receiver<()>,
-    shutdown: CancellationToken,
-    icon: Option<LoadedIcon>,
-) {
-    let mut current = match snap_rx.recv() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    let ui = match build_tray(&current, icon.as_ref()) {
-        Ok(u) => u,
-        Err(e) => {
-            eprintln!("tray init failed: {e}");
-            return;
-        }
-    };
-
-    loop {
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id == ui.quit_id {
-                shutdown.cancel();
-                return;
-            }
-        }
-
-        crossbeam_channel::select! {
-            recv(stop_rx) -> _ => { return; }
-            recv(snap_rx) -> msg => {
-                match msg {
-                    Ok(snap) => {
-                        current = snap;
-                        ui.update(&current);
-                    }
-                    Err(_) => return,
-                }
-            }
-            default(Duration::from_millis(150)) => {}
-        }
-    }
-}
-
-fn build_tray(snapshot: &StatusSnapshot, icon_data: Option<&LoadedIcon>) -> Result<TrayUi> {
-    let menu = Menu::new();
-    let header = MenuItem::new(format!("Service: {}", snapshot.service_name), false, None);
-    let status_item = MenuItem::new(status_line(snapshot), false, None);
-    let clients_item = MenuItem::new(client_line(snapshot), false, None);
-    let pending_item = MenuItem::new(pending_line(snapshot), false, None);
-    let init_item = MenuItem::new(init_line(snapshot), false, None);
-    let restart_item = MenuItem::new(restart_line(snapshot), false, None);
-    let quit_item = MenuItem::new("Quit mux", true, None);
-    let sep = PredefinedMenuItem::separator();
-
-    for item in [
-        &header,
-        &status_item,
-        &clients_item,
-        &pending_item,
-        &init_item,
-        &restart_item,
-    ] {
-        menu.append(item)?;
-    }
-    menu.append(&sep)?;
-    menu.append(&quit_item)?;
-
-    let icon = if let Some(data) = icon_data {
-        Icon::from_rgba(data.data.clone(), data.width, data.height)?
-    } else {
-        default_icon()
-    };
-    let tray = TrayIconBuilder::new()
-        .with_tooltip(format!("mcp_mux – {}", snapshot.service_name))
-        .with_icon(icon)
-        .with_menu(Box::new(menu.clone()))
-        .build()?;
-
-    Ok(TrayUi {
-        _tray: tray,
-        header,
-        status: status_item,
-        clients: clients_item,
-        pending: pending_item,
-        init_state: init_item,
-        restarts: restart_item,
-        quit_id: quit_item.id().clone(),
-    })
-}
-
-fn status_line(snapshot: &StatusSnapshot) -> String {
-    let status_text = match &snapshot.server_status {
-        ServerStatus::Starting => "Starting".to_string(),
-        ServerStatus::Running => "Running".to_string(),
-        ServerStatus::Restarting => "Restarting".to_string(),
-        ServerStatus::Stopped => "Stopped".to_string(),
-        ServerStatus::Failed(reason) => format!("Failed: {reason}"),
-    };
-    format!("Status: {status_text}")
-}
-
-fn client_line(snapshot: &StatusSnapshot) -> String {
-    format!(
-        "Clients: {} (active {}/{})",
-        snapshot.connected_clients, snapshot.active_clients, snapshot.max_active_clients
-    )
-}
-
-fn pending_line(snapshot: &StatusSnapshot) -> String {
-    format!("Pending requests: {}", snapshot.pending_requests)
-}
-
-fn init_line(snapshot: &StatusSnapshot) -> String {
-    let cache = if snapshot.cached_initialize {
-        "cached"
-    } else {
-        "uncached"
-    };
-    let init = if snapshot.initializing {
-        "initializing"
-    } else {
-        "idle"
-    };
-    format!("Initialize: {cache}, {init}")
-}
-
-fn restart_line(snapshot: &StatusSnapshot) -> String {
-    match &snapshot.last_reset {
-        Some(reason) => format!("Restarts: {} (last: {})", snapshot.restarts, reason),
-        None => format!("Restarts: {}", snapshot.restarts),
-    }
-}
-
-fn default_icon() -> Icon {
-    let (w, h) = (16, 16);
-    let mut data = Vec::with_capacity(w * h * 4);
-    for y in 0..h {
-        for x in 0..w {
-            let gradient = 0x60 + ((x + y) % 32) as u8;
-            data.extend_from_slice(&[0x4b, gradient, 0xff, 0xff]);
-        }
-    }
-    Icon::from_rgba(data, w as u32, h as u32).expect("valid icon")
-}
-
-fn find_tray_icon() -> Option<LoadedIcon> {
-    let candidates = [
-        PathBuf::from("public/mcp_mux_icon.png"),
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("public/mcp_mux_icon.png")))
-            .unwrap_or_else(|| PathBuf::from("public/mcp_mux_icon.png")),
-    ];
-
-    for path in candidates {
-        if let Some(icon) = load_icon_from_file(&path) {
-            return Some(icon);
-        }
-    }
-    None
-}
-
-fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
-    let data = fs::read(path).ok()?;
-    let img = image::load_from_memory_with_format(&data, ImageFormat::Png).ok()?;
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    Some(LoadedIcon {
-        data: rgba.into_raw(),
-        width,
-        height,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{expand_path, load_config, Config, ServerConfig};
+    use std::collections::HashMap;
     use std::env;
-    use std::fs::{self, File};
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::mpsc::{self};
 
     fn capture_client(state: &mut MuxState) -> (u64, UnboundedReceiver<Value>) {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -1508,54 +982,103 @@ service_name = "s"
         drop(p2);
     }
 
-    #[test]
-    fn load_icon_from_file_works_for_png() {
-        let path = tmp_path("icon.png");
-        let mut file = File::create(&path).expect("create icon file");
-        // Tiny 2x2 RGBA white image encoded as PNG via image crate
-        let buf = vec![255u8; 2 * 2 * 4];
-        let img = image::RgbaImage::from_raw(2, 2, buf).expect("build raw image");
-        img.write_to(&mut file, image::ImageFormat::Png)
-            .expect("write png");
-
-        let icon = load_icon_from_file(&path);
-        assert!(icon.is_some());
-    }
-
-    #[test]
-    fn status_and_lines_render() {
-        let base = StatusSnapshot {
-            service_name: "s".into(),
-            server_status: ServerStatus::Starting,
-            restarts: 0,
-            connected_clients: 1,
-            active_clients: 1,
-            max_active_clients: 3,
-            pending_requests: 2,
-            cached_initialize: false,
-            initializing: true,
-            last_reset: None,
+    #[tokio::test]
+    async fn reset_state_updates_last_reset_and_status() {
+        let state = Arc::new(Mutex::new(MuxState::new(2, "svc".into())));
+        let active = Arc::new(Semaphore::new(2));
+        let (status_tx, mut status_rx) = {
+            let st = state.lock().await;
+            watch::channel(snapshot_for_state(&st, 0))
         };
-        assert!(status_line(&base).contains("Starting"));
-        assert!(client_line(&base).contains("active 1/3"));
-        assert!(pending_line(&base).contains("2"));
-        assert!(init_line(&base).contains("uncached"));
-        assert!(restart_line(&base).contains("0"));
 
-        let mut running = base.clone();
-        running.server_status = ServerStatus::Failed("x".into());
-        running.cached_initialize = true;
-        running.initializing = false;
-        running.last_reset = Some("fail".into());
-        assert!(status_line(&running).contains("Failed"));
-        assert!(init_line(&running).contains("cached"));
-        assert!(restart_line(&running).contains("fail"));
+        // consume initial snapshot
+        let _ = status_rx.borrow().clone();
+
+        reset_state(&state, "restart-test", &active, &status_tx).await;
+
+        // wait for updated snapshot to propagate
+        status_rx.changed().await.expect("status update");
+        let snap = status_rx.borrow().clone();
+        assert_eq!(snap.last_reset.as_deref(), Some("restart-test"));
+        assert!(!snap.initializing);
+        assert_eq!(snap.pending_requests, 0);
     }
 
-    #[test]
-    fn default_icon_does_not_panic() {
-        let icon = default_icon();
-        // Construction succeeded
-        let _ = icon;
+    #[tokio::test]
+    async fn initialize_served_from_cache_does_not_queue() {
+        let state = Arc::new(Mutex::new(MuxState::new(5, "svc".into())));
+        let active = Arc::new(Semaphore::new(5));
+        let (status_tx, _status_rx) = {
+            let st = state.lock().await;
+            watch::channel(snapshot_for_state(&st, 0))
+        };
+        let (to_server_tx, mut to_server_rx) = mpsc::channel::<Value>(1);
+
+        let mut st = state.lock().await;
+        let (cid, mut rx) = capture_client(&mut st);
+        st.cached_initialize = Some(serde_json::json!({"id": "server-init", "result": "ok"}));
+        drop(st);
+
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "client-init",
+            "method": "initialize",
+            "params": {}
+        });
+
+        handle_client_message(cid, msg, &state, &to_server_tx, &active, &status_tx)
+            .await
+            .expect("handle cached init");
+
+        // nothing forwarded to server
+        assert!(to_server_rx.try_recv().is_err());
+
+        // client got cached response with rewritten id
+        let resp = rx.recv().await.expect("cached init response");
+        assert_eq!(resp.get("id"), Some(&Value::String("client-init".into())));
+
+        let st = state.lock().await;
+        assert!(st.cached_initialize.is_some());
+        assert!(!st.initializing);
+        assert!(st.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reset_state_clears_initialize_and_pending() {
+        let state = Arc::new(Mutex::new(MuxState::new(5, "svc".into())));
+        let active = Arc::new(Semaphore::new(5));
+        let (status_tx, _status_rx) = {
+            let st = state.lock().await;
+            watch::channel(snapshot_for_state(&st, 0))
+        };
+
+        let mut st = state.lock().await;
+        let (cid, mut rx) = capture_client(&mut st);
+        st.cached_initialize = Some(serde_json::json!({"id": "init", "result": true}));
+        st.initializing = true;
+        st.pending.insert(
+            "g-pending".into(),
+            Pending {
+                client_id: cid,
+                local_id: Value::String("local-id".into()),
+                is_initialize: true,
+            },
+        );
+        st.init_waiting
+            .push((cid, Value::String("waiter-id".into())));
+        drop(st);
+
+        reset_state(&state, "reset-reason", &active, &status_tx).await;
+
+        // pending + waiters get errors
+        let errs: Vec<_> = rx.recv().await.into_iter().collect();
+        assert!(!errs.is_empty());
+
+        let st = state.lock().await;
+        assert!(st.pending.is_empty());
+        assert!(st.init_waiting.is_empty());
+        assert!(st.cached_initialize.is_none());
+        assert!(!st.initializing);
+        assert_eq!(st.last_reset.as_deref(), Some("reset-reason"));
     }
 }

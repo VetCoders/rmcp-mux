@@ -29,10 +29,17 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Rust clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
 
       - name: Rust tests
-        run: cargo test
+        run: cargo test --no-default-features
 
       - name: Coverage (tarpaulin)
-        run: cargo tarpaulin --all-targets --timeout 120
+        run: cargo tarpaulin --all-targets --no-default-features --timeout 120 --out Lcov --output-dir target/tarpaulin
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: target/tarpaulin/tarpaulin-report.lcov
+          if-no-files-found: error

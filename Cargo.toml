@@ -3,6 +3,10 @@ name = "mcp_mux"
 version = "0.1.5"
 edition = "2021"
 
+[features]
+default = ["tray"]
+tray = ["tray-icon", "image"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
@@ -16,8 +20,8 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 bytes = "1"
 rmcp = "0.9"
 crossbeam-channel = "0.5"
-tray-icon = "0.21.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
+tray-icon = { version = "0.21.2", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 serde_yaml = "0.9"
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
