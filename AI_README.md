@@ -8,12 +8,12 @@
 ```bash
 cargo build --release
 ./target/release/rmcp_mux \
-  --socket ~/.mcp-servers/rmcp_mux/sockets/memory.sock \
+  --socket ~/.rmcp_servers/rmcp_mux/sockets/memory.sock \
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5 \
-  --status-file ~/.mcp-servers/rmcp_mux/status.json
+  --status-file ~/.rmcp_servers/rmcp_mux/status.json
 # host side: point to bundled proxy
-rmcp_mux_proxy --socket ~/.mcp-servers/rmcp_mux/sockets/memory.sock
+rmcp_mux_proxy --socket ~/.rmcp_servers/rmcp_mux/sockets/memory.sock
 ```
 
 ## Config (JSON/YAML/TOML)

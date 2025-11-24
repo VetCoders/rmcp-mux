@@ -23,7 +23,7 @@ pub struct ScanArgs {
     #[arg(long, default_value = "toml")]
     pub snippet_format: String,
     /// Socket directory for generated services.
-    #[arg(long, default_value = "~/.mcp-servers/rmcp_mux/sockets")]
+    #[arg(long, default_value = "~/.rmcp_servers/rmcp_mux/sockets")]
     pub socket_dir: String,
     /// Do not write files; print to stdout.
     #[arg(long, default_value_t = false)]
@@ -39,7 +39,7 @@ pub struct RewireArgs {
     #[arg(long)]
     pub host: Option<String>,
     /// Socket directory used for proxy args.
-    #[arg(long, default_value = "~/.mcp-servers/rmcp_mux/sockets")]
+    #[arg(long, default_value = "~/.rmcp_servers/rmcp_mux/sockets")]
     pub socket_dir: String,
     /// Proxy command used in rewritten config.
     #[arg(long, default_value = "rmcp_mux_proxy")]

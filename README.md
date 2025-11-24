@@ -59,7 +59,7 @@ Point host config to `rmcp_mux_proxy` with the matching socket path.
       "restart_backoff_ms": 1000,
       "restart_backoff_max_ms": 30000,
       "max_restarts": 5,
-      "status_file": "~/.mcp-servers/rmcp_mux/status.json",
+      "status_file": "~/.rmcp_servers/rmcp_mux/status.json",
       "lazy_start": false,
       "tray": true,
       "service_name": "general-memory"
@@ -80,7 +80,7 @@ servers:
     restart_backoff_ms: 1000
     restart_backoff_max_ms: 30000
     max_restarts: 5
-    status_file: "~/.mcp-servers/rmcp_mux/status.json"
+    status_file: "~/.rmcp_servers/rmcp_mux/status.json"
     lazy_start: false
     tray: true
     service_name: "general-memory"
@@ -97,7 +97,7 @@ request_timeout_ms = 30000
 restart_backoff_ms = 1000
 restart_backoff_max_ms = 30000
 max_restarts = 5
-status_file = "~/.mcp-servers/rmcp_mux/status.json"
+status_file = "~/.rmcp_servers/rmcp_mux/status.json"
 lazy_start = false
 tray = true
 service_name = "general-memory"
@@ -140,7 +140,7 @@ rmcp_mux scan --manifest ~/.codex/mcp-mux.toml --snippet ~/.codex/mcp-mux
 ```
 - Rewire a host config in-place (creates `.bak`; add `--dry-run` to preview):
 ```
-rmcp_mux rewire --host codex --socket-dir ~/.mcp-servers/rmcp_mux/sockets
+rmcp_mux rewire --host codex --socket-dir ~/.rmcp_servers/rmcp_mux/sockets
 ```
 - Snippets use the installed `rmcp_mux_proxy` binary: `command = "rmcp_mux_proxy"; args = ["--socket", "<service.sock>"]`.
 - Check whether a host is already pointed at the mux proxy:
@@ -161,7 +161,7 @@ rmcp_mux health --config ~/.codex/mcp.json --service general-memory
 ## Tray status (optional)
 - Run with `--tray` to spawn a small status icon. The drawer lists service name, server state, connected/active clients, pending requests, initialize cache state, and restart count/reason.
 - Click “Quit mux” in the tray menu to stop the daemon (propagates shutdown to the child and cleans the socket).
-- To feed your own UI/monitor, write status snapshots to JSON: `rmcp_mux --status-file ~/.mcp-servers/rmcp_mux/status.json ...`. The file is updated on every state change.
+- To feed your own UI/monitor, write status snapshots to JSON: `rmcp_mux --status-file ~/.rmcp_servers/rmcp_mux/status.json ...`. The file is updated on every state change.
 ```
 
 ### Proxy config for MCP hosts
