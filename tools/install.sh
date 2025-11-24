@@ -2,11 +2,11 @@
 set -euo pipefail
 umask 022
 
-# mcp_mux install script
+# rmcp_mux install script
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/LibraxisAI/mcp_mux/main/tools/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/LibraxisAI/rmcp_mux/main/tools/install.sh | sh
 # Env overrides:
-#   INSTALL_DIR   where to place the runnable `mcp_mux` wrapper (default: $HOME/.local/bin)
+#   INSTALL_DIR   where to place the runnable `rmcp_mux` wrapper (default: $HOME/.local/bin)
 #   CARGO_HOME    override cargo home (default: ~/.cargo)
 #   MUX_REF       branch/tag/commit to install (default: main)
 #   MUX_NO_LOCK   set to 1 to skip --locked
@@ -14,32 +14,33 @@ umask 022
 INSTALL_DIR=${INSTALL_DIR:-"$HOME/.local/bin"}
 CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"}
 CARGO_BIN="$CARGO_HOME/bin"
-REPO_URL="https://github.com/LibraxisAI/mcp_mux"
+REPO_URL="https://github.com/LibraxisAI/rmcp_mux"
 # Allow pinning a branch/tag/commit; defaults to main.
 MUX_REF=${MUX_REF:-"main"}
 
-info() { printf "[mcp_mux] %s\n" "$*"; }
-warn() { printf "[mcp_mux][warn] %s\n" "$*" >&2; }
+info() { printf "[rmcp_mux] %s\n" "$*"; }
+warn() { printf "[rmcp_mux][warn] %s\n" "$*" >&2; }
 
 command -v cargo >/dev/null 2>&1 || {
   warn "cargo not found. Install Rust (e.g. https://rustup.rs) then re-run.";
   exit 1;
 }
 
-info "Installing mcp_mux from $REPO_URL (ref: $MUX_REF)"
+info "Installing rmcp_mux from $REPO_URL (ref: $MUX_REF)"
 # --locked keeps dependency resolution reproducible; override with MUX_NO_LOCK=1 if needed.
 lock_flag="--locked"
 [ "${MUX_NO_LOCK:-0}" = "1" ] && lock_flag=""
-cargo install --git "$REPO_URL" --branch "$MUX_REF" $lock_flag --force mcp_mux >/dev/null
+# --rev accepts branches, tags, or commits.
+cargo install --git "$REPO_URL" --rev "$MUX_REF" $lock_flag --force rmcp_mux >/dev/null
 
-installed_bin="$CARGO_BIN/mcp_mux"
+installed_bin="$CARGO_BIN/rmcp_mux"
 if [[ ! -x $installed_bin ]]; then
-  warn "mcp_mux binary not found at $installed_bin after install";
+  warn "rmcp_mux binary not found at $installed_bin after install";
   exit 1;
 fi
 
 mkdir -p "$INSTALL_DIR"
-wrapper="$INSTALL_DIR/mcp_mux"
+wrapper="$INSTALL_DIR/rmcp_mux"
 cat >"$wrapper" <<WRAP
 #!/usr/bin/env bash
 exec "$installed_bin" "\$@"
@@ -53,14 +54,14 @@ ensure_path_line() {
   local file="$1"
   local cargo="$CARGO_BIN"
   local install="$INSTALL_DIR"
-  local tag="# mcp_mux installer"
+  local tag="# rmcp_mux installer"
 
   if [ ! -w "$file" ]; then
     warn "Cannot update PATH in $file (not writable). Add manually: export PATH=\"$cargo:$install:\$PATH\""
     return
   fi
 
-  if grep -q "mcp_mux installer" "$file"; then
+  if grep -q "rmcp_mux installer" "$file"; then
     return
   fi
 
@@ -75,7 +76,7 @@ esac
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) :;;
-  *) warn "mcp_mux wrapper dir not in PATH; adding to ~/.zshrc"; ensure_path_line "$HOME/.zshrc";;
+  *) warn "rmcp_mux wrapper dir not in PATH; adding to ~/.zshrc"; ensure_path_line "$HOME/.zshrc";;
 esac
 
-info "Done. Try: mcp_mux --socket /tmp/mcp.sock --cmd npx -- @modelcontextprotocol/server-memory --tray"
+info "Done. Try: rmcp_mux --socket /tmp/mcp.sock --cmd npx -- @modelcontextprotocol/server-memory --tray"

@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossbeam_channel::{bounded, unbounded, Receiver};
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use image::ImageFormat;
 use tokio_util::sync::CancellationToken;
 use tray_icon::{
@@ -26,18 +26,16 @@ pub fn spawn_tray(
     shutdown: CancellationToken,
     icon: Option<LoadedIcon>,
 ) -> thread::JoinHandle<()> {
-    let (snap_tx, snap_rx) = unbounded();
+    // Keep only the latest snapshot to avoid unbounded growth if the tray UI lags.
+    let (snap_tx, snap_rx) = bounded(1);
     let (stop_tx, stop_rx) = bounded(1);
 
     // Most recent snapshot forwarded to blocking tray thread.
     tokio::spawn(async move {
         let mut rx = status_rx;
-        let _ = snap_tx.send(rx.borrow().clone());
+        send_latest(&snap_tx, rx.borrow().clone());
         while rx.changed().await.is_ok() {
-            let snap = rx.borrow().clone();
-            if snap_tx.send(snap).is_err() {
-                break;
-            }
+            send_latest(&snap_tx, rx.borrow().clone());
         }
     });
 
@@ -52,6 +50,16 @@ pub fn spawn_tray(
     });
 
     thread::spawn(move || tray_loop(snap_rx, stop_rx, shutdown, icon))
+}
+
+fn send_latest(tx: &Sender<StatusSnapshot>, snap: StatusSnapshot) {
+    match tx.try_send(snap) {
+        Ok(_) => {}
+        Err(TrySendError::Full(_)) => {
+            // Channel holds a single snapshot; if full, drop the new one.
+        }
+        Err(TrySendError::Disconnected(_)) => {}
+    }
 }
 
 pub struct TrayUi {
@@ -150,7 +158,7 @@ fn build_tray(snapshot: &StatusSnapshot, icon_data: Option<&LoadedIcon>) -> Resu
         default_icon()
     };
     let tray = TrayIconBuilder::new()
-        .with_tooltip(format!("mcp_mux – {}", snapshot.service_name))
+        .with_tooltip(format!("rmcp_mux – {}", snapshot.service_name))
         .with_icon(icon)
         .with_menu(Box::new(menu.clone()))
         .build()?;
@@ -224,11 +232,11 @@ fn default_icon() -> Icon {
 
 pub fn find_tray_icon() -> Option<LoadedIcon> {
     let candidates = [
-        PathBuf::from("public/mcp_mux_icon.png"),
+        PathBuf::from("public/rmcp_mux_icon.png"),
         std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("public/mcp_mux_icon.png")))
-            .unwrap_or_else(|| PathBuf::from("public/mcp_mux_icon.png")),
+            .and_then(|p| p.parent().map(|d| d.join("public/rmcp_mux_icon.png")))
+            .unwrap_or_else(|| PathBuf::from("public/rmcp_mux_icon.png")),
     ];
 
     for path in candidates {
@@ -291,6 +299,12 @@ mod tests {
             cached_initialize: false,
             initializing: true,
             last_reset: None,
+            queue_depth: 0,
+            child_pid: None,
+            max_request_bytes: 1_048_576,
+            restart_backoff_ms: 1_000,
+            restart_backoff_max_ms: 30_000,
+            max_restarts: 5,
         };
         assert!(status_line(&base).contains("Starting"));
         assert!(client_line(&base).contains("active 1/3"));

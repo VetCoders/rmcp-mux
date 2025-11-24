@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, watch, Mutex, Semaphore};
 
 #[cfg_attr(not(feature = "tray"), allow(dead_code))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerStatus {
     Starting,
     Running,
@@ -15,7 +17,7 @@ pub enum ServerStatus {
 }
 
 #[cfg_attr(not(feature = "tray"), allow(dead_code))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StatusSnapshot {
     pub service_name: String,
     pub server_status: ServerStatus,
@@ -27,8 +29,22 @@ pub struct StatusSnapshot {
     pub cached_initialize: bool,
     pub initializing: bool,
     pub last_reset: Option<String>,
+    pub queue_depth: usize,
+    pub child_pid: Option<u32>,
+    pub max_request_bytes: usize,
+    pub restart_backoff_ms: u64,
+    pub restart_backoff_max_ms: u64,
+    pub max_restarts: u64,
 }
 
+/// Central runtime state shared between the async mux loops.
+///
+/// - `queue_depth` caps queued client messages to avoid unbounded memory growth
+///   under bursty hosts.
+/// - `max_request_bytes` and `request_timeout` are enforced per forwarded
+///   request to prevent slowloris/DoS patterns.
+/// - Restart backoff (`restart_backoff`..`restart_backoff_max`) and
+///   `max_restarts` gate child respawns so a flapping server cannot burn CPU.
 #[derive(Clone)]
 pub struct MuxState {
     pub next_client_id: u64,
@@ -43,6 +59,13 @@ pub struct MuxState {
     pub last_reset: Option<String>,
     pub max_active_clients: usize,
     pub service_name: String,
+    pub max_request_bytes: usize,
+    pub request_timeout: Duration,
+    pub restart_backoff: Duration,
+    pub restart_backoff_max: Duration,
+    pub max_restarts: u64,
+    pub queue_depth: usize,
+    pub child_pid: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -50,10 +73,22 @@ pub struct Pending {
     pub client_id: u64,
     pub local_id: Value,
     pub is_initialize: bool,
+    pub started_at: std::time::Instant,
 }
 
 impl MuxState {
-    pub fn new(max_active_clients: usize, service_name: String) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        max_active_clients: usize,
+        service_name: String,
+        max_request_bytes: usize,
+        request_timeout: Duration,
+        restart_backoff: Duration,
+        restart_backoff_max: Duration,
+        max_restarts: u64,
+        queue_depth: usize,
+        child_pid: Option<u32>,
+    ) -> Self {
         Self {
             next_client_id: 1,
             next_global_id: 1,
@@ -67,6 +102,13 @@ impl MuxState {
             last_reset: None,
             max_active_clients,
             service_name,
+            max_request_bytes,
+            request_timeout,
+            restart_backoff,
+            restart_backoff_max,
+            max_restarts,
+            queue_depth,
+            child_pid,
         }
     }
 
@@ -119,6 +161,12 @@ pub fn snapshot_for_state(st: &MuxState, active_clients: usize) -> StatusSnapsho
         cached_initialize: st.cached_initialize.is_some(),
         initializing: st.initializing,
         last_reset: st.last_reset.clone(),
+        queue_depth: st.queue_depth,
+        child_pid: st.child_pid,
+        max_request_bytes: st.max_request_bytes,
+        restart_backoff_ms: st.restart_backoff.as_millis() as u64,
+        restart_backoff_max_ms: st.restart_backoff_max.as_millis() as u64,
+        max_restarts: st.max_restarts,
     }
 }
 
@@ -148,6 +196,8 @@ pub async fn reset_state(
     st.cached_initialize = None;
     st.initializing = false;
     st.last_reset = Some(reason.to_string());
+    st.queue_depth = 0;
+    st.child_pid = None;
 
     for (_, p) in pending {
         if let Some(tx) = st.clients.get(&p.client_id) {

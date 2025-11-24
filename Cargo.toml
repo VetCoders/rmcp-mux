@@ -1,5 +1,5 @@
 [package]
-name = "mcp_mux"
+name = "rmcp_mux"
 version = "0.1.5"
 edition = "2021"
 
@@ -25,3 +25,8 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 serde_yaml = "0.9"
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
+ratatui = "0.28"
+crossterm = "0.27"
+
+[dev-dependencies]
+tempfile = "3"

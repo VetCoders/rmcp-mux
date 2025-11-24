@@ -5,11 +5,11 @@ use clap::Parser;
 use tokio::io::{self, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
 
-/// Lightweight STDIO↔Unix-socket proxy for mcp_mux.
+/// Lightweight STDIO↔Unix-socket proxy for rmcp_mux.
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Proxy STDIO to an mcp_mux socket")]
+#[command(author, version, about = "Proxy STDIO to an rmcp_mux socket")]
 struct ProxyCli {
-    /// Path to the Unix socket exposed by mcp_mux (e.g. ~/mcp-sockets/memory.sock).
+    /// Path to the Unix socket exposed by rmcp_mux (e.g. ~/mcp-sockets/memory.sock).
     #[arg(long)]
     socket: PathBuf,
 }
@@ -65,13 +65,12 @@ mod tests {
 
         // Echo server task
         let server = tokio::spawn(async move {
-            if let Ok((mut stream, _)) = listener.accept().await {
-                let (mut r, mut w) = stream.split();
-                let mut buf = vec![0u8; 256];
-                let n = r.read(&mut buf).await.expect("read");
-                w.write_all(&buf[..n]).await.expect("write back");
-                w.shutdown().await.expect("shutdown");
-            }
+            let (mut stream, _) = listener.accept().await.expect("server accept failed");
+            let (mut r, mut w) = stream.split();
+            let mut buf = vec![0u8; 256];
+            let n = r.read(&mut buf).await.expect("read");
+            w.write_all(&buf[..n]).await.expect("write back");
+            w.shutdown().await.expect("shutdown");
         });
 
         // Duplex streams to simulate stdin/stdout

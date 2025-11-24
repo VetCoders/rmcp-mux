@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
     pub servers: HashMap<String, ServerConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     pub socket: Option<String>,
     pub cmd: Option<String>,
@@ -19,6 +20,13 @@ pub struct ServerConfig {
     pub tray: Option<bool>,
     pub service_name: Option<String>,
     pub log_level: Option<String>,
+    pub lazy_start: Option<bool>,
+    pub max_request_bytes: Option<usize>,
+    pub request_timeout_ms: Option<u64>,
+    pub restart_backoff_ms: Option<u64>,
+    pub restart_backoff_max_ms: Option<u64>,
+    pub max_restarts: Option<u64>,
+    pub status_file: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +38,13 @@ pub struct ResolvedParams {
     pub tray_enabled: bool,
     pub log_level: String,
     pub service_name: String,
+    pub lazy_start: bool,
+    pub max_request_bytes: usize,
+    pub request_timeout: std::time::Duration,
+    pub restart_backoff: std::time::Duration,
+    pub restart_backoff_max: std::time::Duration,
+    pub max_restarts: u64,
+    pub status_file: Option<PathBuf>,
 }
 
 pub fn expand_path(raw: impl AsRef<str>) -> PathBuf {
@@ -130,6 +145,56 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         .and_then(|(_, c)| c.log_level.clone())
         .unwrap_or_else(|| cli.log_level.clone());
 
+    let lazy_start = cli.lazy_start.unwrap_or_else(|| {
+        service_cfg
+            .as_ref()
+            .and_then(|(_, c)| c.lazy_start)
+            .unwrap_or(false)
+    });
+
+    let max_request_bytes = cli.max_request_bytes.unwrap_or_else(|| {
+        service_cfg
+            .as_ref()
+            .and_then(|(_, c)| c.max_request_bytes)
+            .unwrap_or(1_048_576)
+    });
+
+    let request_timeout = Duration::from_millis(cli.request_timeout_ms.unwrap_or_else(|| {
+        service_cfg
+            .as_ref()
+            .and_then(|(_, c)| c.request_timeout_ms)
+            .unwrap_or(30_000)
+    }));
+
+    let restart_backoff = Duration::from_millis(
+        cli.restart_backoff_ms
+            .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.restart_backoff_ms))
+            .unwrap_or(1_000),
+    );
+    let restart_backoff_max = Duration::from_millis(
+        cli.restart_backoff_max_ms
+            .or_else(|| {
+                service_cfg
+                    .as_ref()
+                    .and_then(|(_, c)| c.restart_backoff_max_ms)
+            })
+            .unwrap_or(30_000),
+    );
+    let max_restarts = cli
+        .max_restarts
+        .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.max_restarts))
+        .unwrap_or(5);
+
+    let status_file = cli
+        .status_file
+        .clone()
+        .map(|p| p.to_str().map(expand_path).unwrap_or_else(|| p.clone()))
+        .or_else(|| {
+            service_cfg
+                .as_ref()
+                .and_then(|(_, c)| c.status_file.as_deref().map(expand_path))
+        });
+
     let service_name_raw = cli
         .service_name
         .clone()
@@ -143,7 +208,7 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
                 .file_name()
                 .and_then(|n| n.to_string_lossy().split('.').next().map(|s| s.to_string()))
         })
-        .unwrap_or_else(|| "mcp_mux".to_string());
+        .unwrap_or_else(|| "rmcp_mux".to_string());
 
     Ok(ResolvedParams {
         socket,
@@ -153,5 +218,12 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         tray_enabled,
         log_level,
         service_name: service_name_raw,
+        lazy_start,
+        max_request_bytes,
+        request_timeout,
+        restart_backoff,
+        restart_backoff_max,
+        max_restarts,
+        status_file,
     })
 }
