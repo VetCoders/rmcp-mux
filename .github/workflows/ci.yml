@@ -37,6 +37,9 @@ jobs:
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
         
+      - name: Prepare tarpaulin output directory
+        run: mkdir -p target/tarpaulin
+        
       - name: Coverage (tarpaulin)
         run: cargo tarpaulin --all-targets --no-default-features --timeout 120 --out Lcov --output-dir target/tarpaulin
       
