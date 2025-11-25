@@ -212,3 +212,28 @@ pub async fn reset_state(
     drop(st);
     publish_status(state, active_clients, status_tx).await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_request_id_increments_sequentially() {
+        let mut state = MuxState::new(
+            5,
+            "test-service".into(),
+            1_048_576,
+            Duration::from_secs(30),
+            Duration::from_millis(1_000),
+            Duration::from_millis(30_000),
+            5,
+            0,
+            None,
+        );
+
+        let first = state.next_request_id();
+        let second = state.next_request_id();
+
+        assert_eq!(first + 1, second);
+    }
+}
