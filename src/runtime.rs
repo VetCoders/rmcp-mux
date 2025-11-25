@@ -702,7 +702,7 @@ async fn server_manager(
         child_wait.abort();
         reader_task.abort();
 
-        // reset stanu
+        // reset state
         server_events_tx_clone
             .send(ServerEvent::Reset("MCP server restarted".into()))
             .ok();
