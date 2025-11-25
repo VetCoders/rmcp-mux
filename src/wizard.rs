@@ -20,7 +20,7 @@ use crate::config::{expand_path, load_config, Config, ServerConfig};
 
 #[derive(Debug, Clone, Args)]
 pub struct WizardArgs {
-    /// Path to mux config (json/yaml/toml). Default: ~/.codex/mcp-mux.toml
+    /// Path to mux config (json/yaml/toml). Default: ~/.codex/mcp-mux.toml (expanded to home directory)
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// Service key to edit or create.
