@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2025-12-26
+
+### Breaking Changes
+- **Default paths changed** from `~/.rmcp_servers/rmcp_mux/` to `~/.rmcp-servers/rmcp-mux/`.
+- **Proxy command** changed from `rmcp_mux_proxy` to `rmcp-mux-proxy`.
+
+### Added
+- **Daemon Status Socket** - Query running daemon status via Unix socket.
+- **Heartbeat System** - Configurable health checks for MCP servers.
+  - `heartbeat_enabled` - Enable/disable per-server heartbeat
+  - `heartbeat_interval_ms` - Check interval (default: 30s)
+  - `heartbeat_timeout_ms` - Timeout before marking unhealthy
+- **Tray Dashboard** - Multi-server status view in system tray.
+- **Standalone Build** - Inlined common types, no workspace dependencies.
+
+### Changed
+- Default socket directory: `~/.rmcp-servers/rmcp-mux/sockets`.
+- Default service name: `rmcp-mux` (hyphenated).
+- Detection now matches both `rmcp-mux` and legacy `rmcp_mux` patterns.
+- Updated to Rust Edition 2024 (stable).
+
+### Fixed
+- Consistent naming across paths, commands, and documentation.
+
+## [0.3.4] - 2025-12-20
+
+### Fixed
+- Minor bug fixes and stability improvements.
+
 ## [0.3.0] - 2025-12-04
 
 ### Added

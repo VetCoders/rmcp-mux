@@ -40,7 +40,7 @@ pub fn rewire_selected_clients(app: &AppState) -> Result<()> {
             };
 
             // Use the socket_dir from app state
-            match rewire_host(&host_file, &app.socket_dir, "rmcp_mux_proxy", &[], false) {
+            match rewire_host(&host_file, &app.socket_dir, "rmcp-mux-proxy", &[], false) {
                 Ok(outcome) => {
                     if let Some(backup) = outcome.backup {
                         tracing::info!(

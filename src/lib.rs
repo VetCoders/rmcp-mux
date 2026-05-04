@@ -305,7 +305,7 @@ impl MuxConfig {
             self.socket
                 .file_name()
                 .and_then(|n| n.to_string_lossy().split('.').next().map(|s| s.to_string()))
-                .unwrap_or_else(|| "rmcp_mux".to_string())
+                .unwrap_or_else(|| "rmcp-mux".to_string())
         })
     }
 }

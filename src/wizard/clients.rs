@@ -102,7 +102,7 @@ pub fn detect_clients() -> Vec<ClientEntry> {
             .map(|r| {
                 r.services
                     .iter()
-                    .any(|s| s.command.contains("rmcp_mux") || s.command.contains("rmcp_mux_proxy"))
+                    .any(|s| s.command.contains("rmcp-mux") || s.command.contains("rmcp_mux"))
             })
             .unwrap_or(false);
 

@@ -44,13 +44,13 @@ cargo build --release
 
 # Run mux daemon
 ./target/release/rmcp-mux \
-  --socket ~/.rmcp_servers/rmcp-mux/sockets/memory.sock \
+  --socket ~/.rmcp-servers/rmcp-mux/sockets/memory.sock \
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5 \
-  --status-file ~/.rmcp_servers/rmcp-mux/status.json
+  --status-file ~/.rmcp-servers/rmcp-mux/status.json
 
 # Host side: use bundled proxy
-rmcp-mux-proxy --socket ~/.rmcp_servers/rmcp-mux/sockets/memory.sock
+rmcp-mux-proxy --socket ~/.rmcp-servers/rmcp-mux/sockets/memory.sock
 ```
 
 ## Project Structure (v0.3.0)

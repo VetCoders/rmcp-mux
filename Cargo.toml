@@ -1,6 +1,6 @@
 [package]
 name = "rmcp-mux"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2024"
 description = "MCP server multiplexer - single server, multiple clients via Unix sockets"
 license = "MIT"

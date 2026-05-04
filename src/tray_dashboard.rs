@@ -15,13 +15,36 @@ use tray_icon::{
 };
 
 use crate::multi::StatusLevel;
-use crate::runtime::{DaemonStatus, DEFAULT_STATUS_SOCKET, query_status};
+use crate::runtime::{DEFAULT_STATUS_SOCKET, DaemonStatus, query_status};
 use crate::tray::LoadedIcon;
 
-/// Spawn the multi-server tray dashboard.
+/// Run the tray dashboard on the current thread (required for macOS main thread).
 ///
 /// This creates a system tray icon that shows status of all managed servers.
 /// It queries the daemon status socket periodically and updates the menu.
+/// Must be called from the main thread on macOS.
+pub fn run_tray_dashboard(
+    shutdown: CancellationToken,
+    icon: Option<LoadedIcon>,
+    status_socket: Option<PathBuf>,
+) {
+    let socket = status_socket.unwrap_or_else(|| PathBuf::from(DEFAULT_STATUS_SOCKET));
+
+    // Create a tokio runtime for async status queries
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+
+    rt.block_on(async move {
+        tray_dashboard_loop(socket, shutdown, icon).await;
+    });
+}
+
+/// Spawn the multi-server tray dashboard in a background thread.
+///
+/// Note: On macOS, tray menus must be created on the main thread.
+/// Use `run_tray_dashboard` instead for standalone dashboard commands.
 pub fn spawn_tray_dashboard(
     shutdown: CancellationToken,
     icon: Option<LoadedIcon>,
@@ -78,13 +101,19 @@ impl DashboardUi {
             if let Some(items) = self.servers.get(i) {
                 let icon = status_icon(server.level);
                 items.submenu.set_text(format!("{} {}", icon, server.name));
-                items.status.set_text(format!("  Status: {}", server.status_text));
+                items
+                    .status
+                    .set_text(format!("  Status: {}", server.status_text));
                 items.clients.set_text(format!(
                     "  Clients: {}/{}",
                     server.active_clients, server.max_active_clients
                 ));
-                items.pending.set_text(format!("  Pending: {}", server.pending_requests));
-                items.restarts.set_text(format!("  Restarts: {}", server.restarts));
+                items
+                    .pending
+                    .set_text(format!("  Pending: {}", server.pending_requests));
+                items
+                    .restarts
+                    .set_text(format!("  Restarts: {}", server.restarts));
                 items.heartbeat.set_text(format!(
                     "  Heartbeat: {}",
                     server
@@ -195,11 +224,18 @@ fn build_dashboard(status: &DaemonStatus, icon_data: Option<&LoadedIcon>) -> Res
 
         let status_item = MenuItem::new(format!("  Status: {}", server.status_text), false, None);
         let clients_item = MenuItem::new(
-            format!("  Clients: {}/{}", server.active_clients, server.max_active_clients),
+            format!(
+                "  Clients: {}/{}",
+                server.active_clients, server.max_active_clients
+            ),
             false,
             None,
         );
-        let pending_item = MenuItem::new(format!("  Pending: {}", server.pending_requests), false, None);
+        let pending_item = MenuItem::new(
+            format!("  Pending: {}", server.pending_requests),
+            false,
+            None,
+        );
         let restarts_item = MenuItem::new(format!("  Restarts: {}", server.restarts), false, None);
         let heartbeat_item = MenuItem::new(
             format!(

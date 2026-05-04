@@ -162,10 +162,23 @@ struct DashboardArgs {
     socket: Option<std::path::PathBuf>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = RootCli::parse();
 
+    // Handle Dashboard command BEFORE starting tokio runtime (macOS requires main thread)
+    #[cfg(feature = "tray")]
+    if let Some(CliCommand::Dashboard(args)) = &cli.command {
+        return run_dashboard(args.clone());
+    }
+
+    // Run async main for all other commands
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main(cli))
+}
+
+async fn async_main(cli: RootCli) -> Result<()> {
     match &cli.command {
         Some(CliCommand::Wizard(wargs)) => {
             rmcp_mux::wizard::run_wizard(wargs.clone()).await?;
@@ -193,6 +206,11 @@ async fn main() -> Result<()> {
         Some(CliCommand::DaemonStatus(args)) => {
             run_daemon_status(args.clone()).await?;
             return Ok(());
+        }
+        #[cfg(feature = "tray")]
+        Some(CliCommand::Dashboard(_)) => {
+            // Already handled in main() before tokio starts
+            unreachable!("Dashboard handled before async runtime");
         }
         None => {}
     }
@@ -314,6 +332,23 @@ async fn run_daemon_status(args: DaemonStatusArgs) -> Result<()> {
         print_status_table(&status);
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "tray")]
+fn run_dashboard(args: DashboardArgs) -> Result<()> {
+    use tokio_util::sync::CancellationToken;
+
+    let shutdown = CancellationToken::new();
+
+    println!("Starting rmcp-mux dashboard...");
+    println!("Click 'Quit Dashboard' in tray menu to exit");
+
+    let icon = rmcp_mux::tray::find_tray_icon();
+    // Run on main thread - required for macOS tray menu creation
+    rmcp_mux::tray_dashboard::run_tray_dashboard(shutdown, icon, args.socket);
+
+    println!("Dashboard closed");
     Ok(())
 }
 

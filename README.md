@@ -120,10 +120,10 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
 lazy_start = true
 
 [servers.rmcp-memex]
-socket = "~/.rmcp_servers/sockets/rmcp-memex.sock"
-cmd = "/path/to/rmcp_memex"
+socket = "~/.rmcp-servers/sockets/rmcp-memex.sock"
+cmd = "/path/to/rmcp-memex"
 args = ["serve", "--config", "config.toml", "--db-path", "~/.ai-memories/lancedb"]
-env = { SLED_PATH = "~/.rmcp_servers/sled/memex" }
+env = { SLED_PATH = "~/.rmcp-servers/sled/memex" }
 lazy_start = false
 ```
 
@@ -154,15 +154,15 @@ MCP hosts expecting STDIO communication connect through `rmcp-mux-proxy`:
   "mcpServers": {
     "rmcp-memex": {
       "command": "rmcp-mux-proxy",
-      "args": ["--socket", "~/.rmcp_servers/sockets/rmcp-memex.sock"]
+      "args": ["--socket", "~/.rmcp-servers/sockets/rmcp-memex.sock"]
     },
     "loctree": {
       "command": "rmcp-mux-proxy",
-      "args": ["--socket", "~/.rmcp_servers/sockets/loctree.sock"]
+      "args": ["--socket", "~/.rmcp-servers/sockets/loctree.sock"]
     },
     "brave-search": {
       "command": "rmcp-mux-proxy",
-      "args": ["--socket", "~/.rmcp_servers/sockets/brave-search.sock"]
+      "args": ["--socket", "~/.rmcp-servers/sockets/brave-search.sock"]
     }
   }
 }
@@ -246,13 +246,13 @@ rmcp-mux proxy --socket /tmp/mcp-memory.sock
 rmcp-mux scan \
   --manifest ~/.codex/mcp-mux.toml \
   --snippet ~/.codex/mcp-mux \
-  --socket-dir ~/.rmcp_servers/rmcp-mux/sockets
+  --socket-dir ~/.rmcp-servers/rmcp-mux/sockets
 ```
 
 #### `rewire` – Update host configs
 ```bash
 # Rewire a host config to use rmcp-mux proxy (creates .bak backup)
-rmcp-mux rewire --host codex --socket-dir ~/.rmcp_servers/rmcp-mux/sockets
+rmcp-mux rewire --host codex --socket-dir ~/.rmcp-servers/rmcp-mux/sockets
 
 # Preview changes without writing
 rmcp-mux rewire --host codex --dry-run

@@ -15,7 +15,7 @@ use tray_icon::{
 use crate::state::{ServerStatus, StatusSnapshot};
 
 #[derive(Clone, Debug)]
-pub(crate) struct LoadedIcon {
+pub struct LoadedIcon {
     pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
@@ -232,7 +232,7 @@ fn default_icon() -> Icon {
     Icon::from_rgba(data, w as u32, h as u32).expect("valid icon")
 }
 
-pub(crate) fn find_tray_icon() -> Option<LoadedIcon> {
+pub fn find_tray_icon() -> Option<LoadedIcon> {
     let candidates = [
         PathBuf::from("public/rmcp_mux_icon.png"),
         std::env::current_exe()

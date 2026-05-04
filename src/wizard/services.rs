@@ -132,8 +132,8 @@ pub fn detect_running_mcp_servers() -> Vec<ServiceEntry> {
             continue;
         }
 
-        // Skip rmcp_mux itself and its proxy
-        if args.contains("rmcp_mux") {
+        // Skip rmcp-mux itself and its proxy
+        if args.contains("rmcp-mux") || args.contains("rmcp_mux") {
             continue;
         }
 
