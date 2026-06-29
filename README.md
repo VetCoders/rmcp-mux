@@ -1,6 +1,6 @@
 # rmcp-mux – MCP Server Multiplexer
 
-[![CI](https://github.com/Loctree/rmcp-mux/actions/workflows/ci.yml/badge.svg)](https://github.com/Loctree/rmcp-mux/actions/workflows/ci.yml)
+[![CI](https://github.com/vetcoders/rmcp-mux/actions/workflows/ci.yml/badge.svg)](https://github.com/vetcoders/rmcp-mux/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/rmcp-mux.svg)](https://crates.io/crates/rmcp-mux)
 [![Version](https://img.shields.io/badge/version-0.3.4-blue.svg)](Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -79,7 +79,7 @@ cargo build --release
 
 ### One-liner (curl | sh)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Loctree/rmcp-mux/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/vetcoders/rmcp-mux/main/tools/install.sh | sh
 ```
 
 **Environment overrides:**
@@ -119,11 +119,11 @@ cmd = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
 lazy_start = true
 
-[servers.rmcp-memex]
-socket = "~/.rmcp-servers/sockets/rmcp-memex.sock"
-cmd = "/path/to/rmcp-memex"
-args = ["serve", "--config", "config.toml", "--db-path", "~/.ai-memories/lancedb"]
-env = { SLED_PATH = "~/.rmcp-servers/sled/memex" }
+[servers.custom-db]
+socket = "~/mcp-sockets/custom-db.sock"
+cmd = "/path/to/custom-mcp-server"
+args = ["serve", "--config", "config.toml", "--db-path", "~/.local/share/custom-db"]
+env = { DB_PATH = "~/.local/share/custom-db/store" }
 lazy_start = false
 ```
 
@@ -152,9 +152,9 @@ MCP hosts expecting STDIO communication connect through `rmcp-mux-proxy`:
 ```json
 {
   "mcpServers": {
-    "rmcp-memex": {
+    "memory": {
       "command": "rmcp-mux-proxy",
-      "args": ["--socket", "~/.rmcp-servers/sockets/rmcp-memex.sock"]
+      "args": ["--socket", "~/.rmcp-servers/sockets/memory.sock"]
     },
     "loctree": {
       "command": "rmcp-mux-proxy",
