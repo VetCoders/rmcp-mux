@@ -68,8 +68,7 @@ error messages or tests.
 
 ### 1.3. Building the binaries
 
-All builds are driven through Cargo. From the project root (`/Users/maciejgad/.rmcp_servers/rmcp-mux` in the current
-setup):
+All builds are driven through Cargo. From the project root (`~/rmcp-mux`, for example):
 
 #### 1.3.1. Debug build (fast, for development)
 

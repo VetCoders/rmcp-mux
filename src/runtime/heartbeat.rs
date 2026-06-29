@@ -4,8 +4,7 @@
 //! It periodically sends lightweight ping probes and tracks response times,
 //! triggering server restarts when the backend becomes unresponsive.
 //!
-//! Created by M&K (c)2025 The LibraxisAI Team
-//! Co-Authored-By: [Maciej](void@div0.space) & [Klaudiusz](the1st@whoai.am)
+//! Created by Vetcoders (c)2025
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
