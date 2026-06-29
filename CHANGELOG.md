@@ -119,15 +119,15 @@ let h2 = spawn_mux_server(MuxConfig::new("/tmp/b.sock", "server-b")).await?;
 ## [0.2.0] - 2025-11-24
 
 ### Added
-- Optional tray icon (`--tray`) showing live server status, client and pending counts, and restart reasons. ([5eefde4](https://github.com/Loctree/rmcp-mux/commit/5eefde4))
-- Config file support (JSON/YAML/TOML) with auto-detection and CLI overrides. ([5eefde4](https://github.com/Loctree/rmcp-mux/commit/5eefde4))
-- `rmcp_mux_proxy` helper binary plus launchd template and installer tweaks for easier setup. ([04e5402](https://github.com/Loctree/rmcp-mux/commit/04e5402))
-- GitHub Actions CI workflow for formatting, linting, testing, and coverage, including an async proxy forwarding test. ([ad2b9aa](https://github.com/Loctree/rmcp-mux/commit/ad2b9aa))
-- Mux hooks, Semgrep rules, and expanded README documentation. ([e80083c](https://github.com/Loctree/rmcp-mux/commit/e80083c))
+- Optional tray icon (`--tray`) showing live server status, client and pending counts, and restart reasons. ([5eefde4](https://github.com/vetcoders/rmcp-mux/commit/5eefde4))
+- Config file support (JSON/YAML/TOML) with auto-detection and CLI overrides. ([5eefde4](https://github.com/vetcoders/rmcp-mux/commit/5eefde4))
+- `rmcp_mux_proxy` helper binary plus launchd template and installer tweaks for easier setup. ([04e5402](https://github.com/vetcoders/rmcp-mux/commit/04e5402))
+- GitHub Actions CI workflow for formatting, linting, testing, and coverage, including an async proxy forwarding test. ([ad2b9aa](https://github.com/vetcoders/rmcp-mux/commit/ad2b9aa))
+- Mux hooks, Semgrep rules, and expanded README documentation. ([e80083c](https://github.com/vetcoders/rmcp-mux/commit/e80083c))
 - `health` subcommand to resolve config and assert socket reachability, plus unit tests for healthy/missing sockets.
 
 ### Changed
-- Refactored mux state management and tray functionality into dedicated `state` and `tray` modules, with tray dependencies gated behind an optional `tray` feature; CI updated to run with `--no-default-features`. ([0d60764](https://github.com/Loctree/rmcp-mux/commit/0d60764), [ad2b9aa](https://github.com/Loctree/rmcp-mux/commit/ad2b9aa))
+- Refactored mux state management and tray functionality into dedicated `state` and `tray` modules, with tray dependencies gated behind an optional `tray` feature; CI updated to run with `--no-default-features`. ([0d60764](https://github.com/vetcoders/rmcp-mux/commit/0d60764), [ad2b9aa](https://github.com/vetcoders/rmcp-mux/commit/ad2b9aa))
 
 ## [0.1.5] - 2025-11-20
 
