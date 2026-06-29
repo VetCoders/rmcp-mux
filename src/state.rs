@@ -409,6 +409,9 @@ pub async fn reset_state(
 fn compute_health_status(st: &MuxState, active_clients: usize) -> HealthStatus {
     match &st.server_status {
         ServerStatus::Running => {
+            // Explicit guard-then-divide reads clearer than checked_div here:
+            // we want a plain 0 default, not an Option. Behaviour unchanged.
+            #[allow(clippy::manual_checked_ops)]
             let load_pct = if st.max_active_clients > 0 {
                 (active_clients * 100) / st.max_active_clients
             } else {
